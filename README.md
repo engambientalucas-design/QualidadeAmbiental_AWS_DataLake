@@ -1,321 +1,364 @@
 <div align="center">
 
-# 🌊 QualidadeAmbiental AWS Data Lake
+# Qualidade Ambiental AWS Data Lake
 
-**Contract-driven cloud ingestion pipeline for environmental water quality monitoring data.**
+**Pipeline serverless e orientado por contrato para dados de qualidade da agua e esgoto.**
 
-*From SQL Server to Parquet — validated, cataloged, and ready for Power BI.*
+Do SQL Server ao Parquet, com validacao local, catalogacao no Glue, consultas no Athena e consumo no Power BI.
 
----
+[![CI](https://github.com/engambientalucas-design/QualidadeAmbiental_AWS_DataLake/actions/workflows/ci.yml/badge.svg)](https://github.com/engambientalucas-design/QualidadeAmbiental_AWS_DataLake/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/engambientalucas-design/QualidadeAmbiental_AWS_DataLake?style=flat-square)](https://github.com/engambientalucas-design/QualidadeAmbiental_AWS_DataLake/releases)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![AWS](https://img.shields.io/badge/AWS-S3%20%7C%20Glue%20%7C%20Athena-FF9900?style=flat-square)](https://aws.amazon.com/)
+[![Power BI](https://img.shields.io/badge/Power_BI-Import-F2C811?style=flat-square&logo=powerbi&logoColor=black)](https://powerbi.microsoft.com/)
+[![License](https://img.shields.io/github/license/engambientalucas-design/QualidadeAmbiental_AWS_DataLake?style=flat-square)](./LICENSE)
 
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-[![AWS](https://img.shields.io/badge/AWS-Cloud-FF9900?style=flat-square&logo=amazonaws&logoColor=white)](https://aws.amazon.com/)
-[![Amazon S3](https://img.shields.io/badge/Amazon_S3-Storage-569A31?style=flat-square&logo=amazons3&logoColor=white)](https://aws.amazon.com/s3/)
-[![AWS Glue](https://img.shields.io/badge/AWS_Glue-ETL-8C4FFF?style=flat-square&logo=awslambda&logoColor=white)](https://aws.amazon.com/glue/)
-[![Amazon Athena](https://img.shields.io/badge/Amazon_Athena-Query-232F3E?style=flat-square&logo=amazonaws&logoColor=white)](https://aws.amazon.com/athena/)
-[![Power BI](https://img.shields.io/badge/Power_BI-Reporting-F2C811?style=flat-square&logo=powerbi&logoColor=black)](https://powerbi.microsoft.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.1.0-blue?style=flat-square)]()
-[![Tests](https://img.shields.io/badge/Tests-Passing-brightgreen?style=flat-square)]()
+[Visao geral](#visao-geral) · [Arquitetura](#arquitetura) · [Instalacao](#instalacao) · [Uso](#uso) · [Roadmap](#roadmap)
 
 </div>
 
 ---
 
-## 📖 Sobre o Projeto
+## Visao geral
 
-**QualidadeAmbiental AWS Data Lake** é um pipeline de engenharia de dados cloud-native derivado do contrato externo de dados v2.1.0 do projeto [`QualidadeAmbiental_SQLServer`](https://github.com/engambientalucas-design/QualidadeAmbiental_SQLServer). Ele automatiza a ingestão, validação, catalogação e transformação de dados de monitoramento de qualidade da água e esgoto em um Data Lake na AWS.
+O **Qualidade Ambiental AWS Data Lake** e um projeto derivado do contrato externo de dados
+v2.1.0 do [`QualidadeAmbiental_SQLServer`](https://github.com/engambientalucas-design/QualidadeAmbiental_SQLServer).
+Ele recebe o CSV consolidado pela view `dbo.VW_ConformidadeResultados`, valida o contrato antes
+de qualquer chamada a nuvem e prepara o lote para consumo analitico em uma arquitetura em camadas.
 
-**Valor técnico:** O projeto implementa um pipeline de dados com contrato rígido de 30 colunas, validação local pré-ingestão, arquitetura medallion (raw → curated) e exposição analítica via Athena + Power BI — tudo sem armazenar credenciais no repositório.
+### Problema
 
-**Valor de negócio:** Permite que engenheiros ambientais e analistas de dados acessem dados históricos de conformidade hídrica de forma confiável, rastreável e escalável, diretamente em ferramentas de BI corporativo.
+Exportacoes analiticas podem chegar sem cabecalho, conter `NULL` literal, quebrar tipos esperados,
+duplicar resultados ou ser carregadas novamente na mesma particao. Sem controles explicitos, esses
+problemas contaminam indicadores e tornam a origem dos dados dificil de auditar.
 
-> **Escopo v0.1.0:** Automação de validação e ingestão de novos lotes após o provisionamento da infraestrutura AWS. Provisionamento de infraestrutura e substituição destrutiva de partições estão fora do escopo desta versão.
+### Solucao
 
----
+O projeto implementa uma CLI Python que:
 
-## 🏗️ Arquitetura
+- normaliza exportacoes do SSMS para o contrato oficial de 30 colunas;
+- valida tipos, datas ISO, decimais, nulos, unicidade e flags de conformidade;
+- recusa particoes raw ou curated preexistentes;
+- envia o CSV para uma particao `ingestion_date` no Amazon S3;
+- executa e acompanha o AWS Glue Crawler;
+- compara contagens locais, raw e curated antes de concluir a carga;
+- gera a transformacao Athena para Parquet com compressao Snappy.
+
+> **Status da v0.1.0:** a fundacao AWS e a integracao com Power BI foram validadas manualmente de
+> ponta a ponta para a particao `2026-06-22`. O orquestrador Python esta implementado e coberto por
+> testes automatizados com clientes AWS simulados. A primeira execucao automatizada de um novo lote,
+> usando uma identidade de ingestao dedicada, permanece no roadmap.
+
+## Arquitetura
+
+```mermaid
+flowchart LR
+    SQL[(SQL Server<br/>VW_ConformidadeResultados)] --> CSV[CSV contratado<br/>30 colunas]
+    CSV --> PY[Python CLI<br/>normalize · validate · plan · ingest]
+    PY --> RAW[(S3 raw<br/>CSV particionado)]
+    RAW --> GLUE[AWS Glue Crawler<br/>Data Catalog]
+    GLUE --> ATHENA[Amazon Athena<br/>SQL serverless]
+    ATHENA --> CURATED[(S3 curated<br/>Parquet + Snappy)]
+    CURATED --> PBI[Power BI<br/>modo Import]
+```
+
+Uma unica conta AWS e um unico bucket podem hospedar os prefixos abaixo:
 
 ```text
-┌─────────────────────────────────────┐
-│   SQL Server View / CSV Contratado  │
-│          (Fonte de dados)           │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│    Python — Validação de Contrato   │
-│  30 colunas · ISO dates · unicidade │
-│  flags de conformidade · nulos      │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│         S3 Raw Zone (CSV)           │
-│   Partição: /ingestion_date=YYYY-   │
-│   MM-DD/                            │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│   AWS Glue Crawler + Data Catalog   │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│    Amazon Athena INSERT INTO        │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│      S3 Curated Zone (Parquet)      │
-│         Compressão: Snappy          │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│    Amazon Athena → Power BI Import  │
-│         (Camada analítica)          │
-└─────────────────────────────────────┘
+s3://<bucket>/raw/dados_conformidade/ingestion_date=YYYY-MM-DD/
+s3://<bucket>/curated/dados_conformidade/ingestion_date=YYYY-MM-DD/
+s3://<bucket>/athena-results/
 ```
 
----
+### Responsabilidades por camada
 
-## 🎬 Demonstração
+| Camada | Responsabilidade |
+| --- | --- |
+| SQL Server | Fonte oficial e classificacao de conformidade |
+| Python | Normalizacao, contrato, protecoes e orquestracao |
+| S3 raw | Preservacao do CSV contratado por data de ingestao |
+| Glue | Descoberta de esquema e registro de particoes |
+| Athena | Validacao SQL e transformacao para a camada curated |
+| S3 curated | Dados tipados em Parquet/Snappy |
+| Power BI | Modelo semantico e visualizacao em modo Import |
 
-> **📌 Placeholder:** Adicione aqui um GIF ou vídeo do pipeline em execução — por exemplo, a saída do terminal ao rodar `qa-datalake ingest` com validação, upload para S3, e confirmação de contagem no Athena.
+## Demonstracao verificavel
 
+O lote didatico versionado permite reproduzir a validacao local sem credenciais AWS:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m qa_datalake validate data\sample\dados_conformidade_v2_1_0.csv --baseline
 ```
-[ GIF / Screencast do pipeline aqui ]
-Sugestão: grave com asciinema ou OBS e converta para GIF via gifski.
+
+Saida esperada:
+
+```json
+{
+  "rows": 72,
+  "columns": 30,
+  "unique_samples": 6,
+  "unique_parameters": 12,
+  "with_limit": 57,
+  "without_limit": 15,
+  "conformant": 50,
+  "non_conformant": 7
+}
 ```
 
----
+Os mesmos indicadores foram conferidos no Athena e no Power BI durante a validacao da fundacao AWS.
 
-## ✨ Principais Funcionalidades
+## Principais funcionalidades
 
-- **Validação de contrato pré-ingestão** — garante 30 colunas, tipos ISO, decimais, identifiers, unicidade e flags de conformidade antes de qualquer chamada à AWS.
-- **Arquitetura medallion com S3** — zonas raw (CSV) e curated (Parquet/Snappy), particionadas por `ingestion_date`.
-- **Proteção contra ingestão duplicada** — partições existentes em raw ou curated são rejeitadas automaticamente.
-- **Contagem dupla de integridade** — a contagem Athena raw deve igualar a contagem local antes de carregar curated; após o carregamento, a contagem curated também deve igualar.
-- **CLI ergonômica** — comandos `normalize`, `validate`, `plan` e `ingest` com flags claras.
-- **Credenciais zero no repositório** — resolução exclusiva via AWS SDK credential chain (IAM Identity Center, perfil CLI ou variáveis de ambiente).
-- **Suite de testes independente de nuvem** — sem dependências de AWS; roda com `unittest` puro.
-- **Baseline reproduzível** — lote didático v2.1.0 com contagens verificadas para onboarding e CI.
+- **Contrato antes da nuvem:** validacao local ocorre antes de qualquer API AWS.
+- **Normalizacao controlada:** adiciona o cabecalho oficial e converte `NULL` literal em campo vazio.
+- **Carga idempotente por rejeicao:** uma particao existente bloqueia nova escrita.
+- **Sincronizacao segura do crawler:** ignora o resultado anterior e aguarda a execucao atual.
+- **Gates de contagem:** CSV local, tabela raw e tabela curated devem apresentar o mesmo total.
+- **SQL protegido:** nomes de banco e tabela passam por validacao antes da geracao das consultas.
+- **Configuracao externa:** nomes de recursos ficam no `.env`; credenciais permanecem fora do Git.
+- **Testes sem nuvem:** a suite usa `unittest` e clientes simulados para validar a orquestracao.
 
----
+## Baseline validado
 
-## 🔢 Baseline Validado
-
-O lote didático v2.1.0 é mantido como amostra reproduzível e deve retornar exatamente:
-
-| Indicador | Valor |
-|---|---:|
-| Resultados analíticos | 72 |
-| Resultados com limite de referência | 57 |
-| Resultados sem limite de referência | 15 |
+| Indicador | Valor esperado |
+| --- | ---: |
+| Resultados analiticos | 72 |
+| Resultados com limite de referencia | 57 |
+| Resultados sem limite de referencia | 15 |
 | Resultados conformes com limite | 50 |
-| Resultados não-conformes com limite | 7 |
+| Resultados nao conformes com limite | 7 |
 
-> O baseline é explícito e opcional. Lotes válidos futuros podem ter totais diferentes.
+O baseline e opcional e representa apenas o dataset didatico v2.1.0. Novos lotes validos podem
+ter totais diferentes.
 
----
+## Requisitos
 
-## 🛡️ Propriedades de Segurança
+### Para validacao local
 
-| Propriedade | Garantia |
-|---|---|
-| Validação local | Executa **antes** de qualquer chamada à AWS |
-| Contrato rígido | Exatamente 30 colunas obrigatórias |
-| Tipos validados | ISO dates, decimais, identifiers, nulos, unicidade, flags |
-| Anti-duplicata | Partições existentes (raw ou curated) são rejeitadas |
-| Integridade raw | Contagem Athena raw = contagem local CSV antes do curated |
-| Integridade curated | Contagem Athena curated = contagem local CSV após carga |
-| Sem sobrescrita | Nenhuma opção `--force` ou `--overwrite` exposta |
-| Credenciais | Resolvidas pelo AWS SDK chain; nunca armazenadas no projeto |
+- Git;
+- Python 3.11 ou superior.
 
----
+### Para ingestao AWS
 
-## ⚙️ Pré-requisitos
+- AWS CLI configurado com uma identidade de ingestao nao-root;
+- `boto3` e `python-dotenv`, instalados pelo projeto;
+- bucket S3 com os prefixos raw, curated e athena-results;
+- Glue Crawler e bancos do Data Catalog existentes;
+- tabela curated e workgroup Athena existentes;
+- permissoes minimas para os recursos declarados no `.env`.
 
-Certifique-se de ter os itens abaixo instalados e configurados:
+> A identidade restrita usada pelo Power BI nao deve ser reutilizada para ingestao.
 
-- **Python** `>= 3.11`
-- **AWS CLI** configurado com um perfil IAM Identity Center (ou equivalente)
-- **Acesso AWS** com permissões para S3, Glue, e Athena nos recursos declarados no `.env`
-- Infraestrutura AWS já provisionada (buckets S3, Glue Crawler, banco de dados Athena)
+## Instalacao
 
----
+### Windows PowerShell
 
-## 🚀 Instalação
+```powershell
+git clone https://github.com/engambientalucas-design/QualidadeAmbiental_AWS_DataLake.git
+Set-Location QualidadeAmbiental_AWS_DataLake
 
-**1. Clone o repositório**
+py -m venv .venv
+.venv\Scripts\Activate.ps1
 
-```bash
-git clone https://github.com/engambientalucas-design/QualidadeAmbiental_AWSDataLake.git
-cd QualidadeAmbiental_AWSDataLake
-```
-
-**2. Crie e ative o ambiente virtual**
-
-```bash
-python -m venv .venv
-source .venv/bin/activate        # Linux / macOS
-# .venv\Scripts\activate         # Windows
-```
-
-**3. Instale o pacote com dependências de desenvolvimento**
-
-```bash
+python -m pip install --upgrade pip
 pip install -e ".[dev]"
+
+Copy-Item .env.example .env
 ```
 
-**4. Configure as variáveis de ambiente**
+### Linux ou macOS
 
 ```bash
+git clone https://github.com/engambientalucas-design/QualidadeAmbiental_AWS_DataLake.git
+cd QualidadeAmbiental_AWS_DataLake
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
+
 cp .env.example .env
-# Abra .env e preencha apenas os nomes dos recursos AWS.
-# NÃO coloque Access Keys no .env — use um perfil AWS CLI.
 ```
 
----
+## Configuracao
 
-## 📦 Configuração
-
-Copie `.env.example` para `.env` e preencha os nomes dos seus recursos:
+Preencha o `.env` somente com nomes de recursos. Nao inclua Access Key ID, Secret Access Key ou
+Session Token nesse arquivo.
 
 ```dotenv
-# .env — apenas nomes de recursos, sem segredos
-QA_S3_RAW_BUCKET=meu-bucket-raw
-QA_S3_CURATED_BUCKET=meu-bucket-curated
-QA_GLUE_DATABASE=qualidade_ambiental
-QA_ATHENA_OUTPUT_LOCATION=s3://meu-bucket-athena-results/
+QA_AWS_REGION=us-east-1
+QA_S3_BUCKET=replace-with-your-bucket-name
+QA_RAW_PREFIX=raw/dados_conformidade
+QA_GLUE_CRAWLER=qa-dados-conformidade-raw-crawler
+QA_ATHENA_WORKGROUP=qa-qualidade-ambiental-wg
+QA_RAW_DATABASE=qualidade_ambiental_raw
+QA_RAW_TABLE=raw_dados_conformidade
+QA_CURATED_DATABASE=qualidade_ambiental_curated
+QA_CURATED_TABLE=dados_conformidade
+QA_POLL_SECONDS=5
+QA_TIMEOUT_SECONDS=600
 ```
 
-> Para desenvolvimento local, prefira um perfil AWS CLI com IAM Identity Center.
-> A identidade IAM restrita do Power BI **não** é uma identidade de ingestão.
+As credenciais sao resolvidas pela cadeia padrao do AWS SDK. Para desenvolvimento local, prefira
+um perfil AWS CLI baseado em IAM Identity Center ou outra forma de credencial temporaria.
 
----
+## Uso
 
-## 💻 Exemplos de Uso
+### Normalizar uma exportacao do SSMS
 
-**Normalizar um export bruto do SSMS:**
+Use quando o arquivo nao tiver cabecalho ou contiver `NULL` literal:
 
-```bash
-qa-datalake normalize data/input/export_ssms.csv data/output/dados_conformidade.csv
+```powershell
+qa-datalake normalize data\input\export_ssms.csv data\output\dados_conformidade.csv
 ```
 
-**Validar contra o baseline didático v2.1.0:**
+### Validar localmente
 
-```bash
-qa-datalake validate data/sample/dados_conformidade_v2_1_0.csv --baseline
+```powershell
+qa-datalake validate data\output\dados_conformidade.csv
 ```
 
-**Simular (dry-run) uma ingestão sem escrever na AWS:**
+Para exigir os totais do lote didatico:
 
-```bash
-qa-datalake plan data/sample/dados_conformidade_v2_1_0.csv --ingestion-date 2026-06-22
+```powershell
+qa-datalake validate data\sample\dados_conformidade_v2_1_0.csv --baseline
 ```
 
-**Ingerir um novo lote:**
+### Visualizar o plano sem acessar a AWS
 
-```bash
-qa-datalake ingest data/output/dados_conformidade.csv --ingestion-date 2026-07-01
+```powershell
+qa-datalake plan data\output\dados_conformidade.csv --ingestion-date 2026-07-01
 ```
 
-> ⚠️ **Não execute** a ingestão de amostra contra `2026-06-22`: essa partição já existe no ambiente validado e o pipeline irá rejeitá-la corretamente.
+### Ingerir um novo lote
 
----
+```powershell
+qa-datalake ingest data\output\dados_conformidade.csv --ingestion-date 2026-07-01
+```
 
-## 🧪 Testes
+> Nao execute o lote de amostra contra `2026-06-22`: essa particao ja existe no ambiente usado
+> para validar a fundacao AWS e sera corretamente rejeitada.
 
-Execute a suite de testes sem dependências de nuvem:
+O procedimento operacional e as regras de recuperacao estao no
+[`docs/runbook.md`](./docs/runbook.md).
+
+## Testes
+
+### Windows PowerShell
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m unittest discover -s tests -v
+```
+
+### Linux ou macOS
 
 ```bash
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-Os testes cobrem validação de contrato e geração de SQL. Nenhuma credencial ou chamada AWS é necessária.
+A suite atual possui 11 testes para contrato CSV, normalizacao, SQL Athena, sincronizacao do
+crawler, orquestracao simulada e baseline versionado. O mesmo comando e executado pelo GitHub
+Actions em pushes e pull requests.
 
----
-
-## 🗂️ Estrutura do Projeto
+## Estrutura do repositorio
 
 ```text
-QualidadeAmbiental_AWSDataLake/
-│
-├── src/
-│   └── qa_datalake/          # Pacote Python e CLI (normalize, validate, plan, ingest)
-│
-├── tests/                    # Suite de testes de contrato e geração SQL
-│
-├── docs/
-│   └── runbook.md            # Procedimento de operação em lote e recuperação
-│
+QualidadeAmbiental_AWS_DataLake/
+├── .github/
+│   └── workflows/
+│       └── ci.yml
 ├── data/
-│   └── sample/               # Dataset didático contratado (v2.1.0)
-│
-├── .env.example              # Configuração de nomes de recursos sem segredos
+│   └── sample/
+│       └── dados_conformidade_v2_1_0.csv
+├── docs/
+│   ├── adr/
+│   │   └── 0001-separate-derived-project.md
+│   └── runbook.md
+├── src/
+│   └── qa_datalake/
+├── tests/
+├── .env.example
+├── .gitignore
+├── CHANGELOG.md
+├── LICENSE
 ├── pyproject.toml
 └── README.md
 ```
 
----
+## Stack
 
-## 🛠️ Stack Utilizada
+| Tecnologia | Uso no projeto |
+| --- | --- |
+| Python 3.11+ | CLI, validacao de contrato e orquestracao |
+| boto3 | Integracao com APIs AWS |
+| Amazon S3 | Zonas raw e curated, alem de resultados Athena |
+| AWS Glue | Crawler e Data Catalog |
+| Amazon Athena | Validacao SQL e transformacao serverless |
+| Apache Parquet + Snappy | Formato colunar e compressao da camada curated |
+| Power BI | Consumo analitico em modo Import |
+| GitHub Actions | Testes automatizados em push e pull request |
 
-| Camada | Tecnologia |
-|---|---|
-| ![Python](https://img.shields.io/badge/-Python_3.11+-3776AB?style=flat-square&logo=python&logoColor=white) | Linguagem principal, CLI, validação de contrato |
-| ![Amazon S3](https://img.shields.io/badge/-Amazon_S3-569A31?style=flat-square&logo=amazons3&logoColor=white) | Armazenamento raw (CSV) e curated (Parquet/Snappy) |
-| ![AWS Glue](https://img.shields.io/badge/-AWS_Glue-8C4FFF?style=flat-square&logo=awslambda&logoColor=white) | Crawler e Data Catalog |
-| ![Amazon Athena](https://img.shields.io/badge/-Amazon_Athena-232F3E?style=flat-square&logo=amazonaws&logoColor=white) | Queries SQL serverless sobre S3 |
-| ![Power BI](https://img.shields.io/badge/-Power_BI-F2C811?style=flat-square&logo=powerbi&logoColor=black) | Camada de relatórios e BI |
-| ![SQL Server](https://img.shields.io/badge/-SQL_Server-CC2927?style=flat-square&logo=microsoftsqlserver&logoColor=white) | Fonte de dados (projeto externo contratado) |
+## Seguranca e custos
 
----
+- Nunca use a conta root para executar a CLI de ingestao.
+- Nao versione `.env`, perfis AWS, arquivos de credenciais ou resultados Athena.
+- Use uma identidade de ingestao separada da identidade de leitura do Power BI.
+- Mantenha o crawler sem agendamento enquanto o volume for didatico.
+- Use filtros de particao nas consultas Athena.
+- Mantenha limite de bytes por consulta no workgroup.
+- AWS Budgets envia alertas, mas nao interrompe gastos automaticamente.
 
-## 🗺️ Roadmap
+## Roadmap
 
-> Acompanhe o progresso via [GitHub Issues](../../issues).
+Consulte as [GitHub Issues](https://github.com/engambientalucas-design/QualidadeAmbiental_AWS_DataLake/issues)
+para acompanhar a evolucao.
 
-- [x] Validação de contrato local (30 colunas, tipos, unicidade)
-- [x] Ingestão raw para S3 com particionamento por `ingestion_date`
-- [x] Catalogação via AWS Glue Crawler
-- [x] Transformação raw → curated (Parquet/Snappy via Athena)
-- [x] Suite de testes independente de nuvem
-- [ ] Orquestração automática de lotes (ex: AWS Step Functions ou Airflow)
-- [ ] Provisionamento de infraestrutura como código (Terraform / CDK)
-- [ ] Monitoramento e alertas de qualidade de dados (ex: AWS CloudWatch)
-- [ ] Suporte a múltiplas ETAs e sistemas de abastecimento
-- [ ] Dashboard Power BI publicado como template
+- [x] Fundacao S3, Glue, Athena e Power BI validada manualmente
+- [x] Contrato CSV de 30 colunas e baseline reproduzivel
+- [x] Normalizacao de exportacao SSMS
+- [x] Orquestrador Python com protecao contra duplicidade
+- [x] Testes automatizados locais
+- [ ] Identidade IAM dedicada para ingestao Python
+- [ ] Primeira execucao automatizada de um novo lote na AWS
+- [x] Workflow de CI versionado no repositorio
+- [ ] Primeira execucao bem-sucedida do GitHub Actions
+- [ ] Infraestrutura como codigo com Terraform ou AWS CDK
+- [ ] Monitoramento operacional no CloudWatch
+- [ ] Politicas de ciclo de vida para resultados Athena
+- [ ] Template Power BI distribuivel
 
----
+## Contribuicao
 
-## 🤝 Contribuição
+Contribuicoes sao bem-vindas quando preservam o contrato de dados e as protecoes contra escrita
+duplicada.
 
-Contribuições são bem-vindas! Para contribuir:
+1. Crie um fork do repositorio.
+2. Abra uma branch a partir de `main`.
+3. Implemente a alteracao com testes correspondentes.
+4. Execute a suite localmente.
+5. Abra um pull request descrevendo motivacao, impacto e evidencias.
 
-1. Faça um **fork** do repositório
-2. Crie uma branch descritiva: `git checkout -b feat/nome-da-feature`
-3. Faça suas alterações e adicione testes quando aplicável
-4. Certifique-se de que `python -m unittest discover -s tests -v` passa sem erros
-5. Abra um **Pull Request** com descrição clara da mudança e motivação
+Para bugs ou propostas de evolucao, abra uma
+[issue](https://github.com/engambientalucas-design/QualidadeAmbiental_AWS_DataLake/issues).
 
-Para reportar bugs ou sugerir melhorias, abra uma [Issue](../../issues).
+## Decisoes e limitacoes
 
----
+- O SQL Server permanece a fonte oficial da regra de conformidade.
+- Este projeto consome o contrato; ele nao recalcula a regra ambiental.
+- Os limites e resultados do dataset sao didaticos e nao constituem enquadramento legal.
+- Substituicao destrutiva de particoes permanece fora do escopo da v0.1.0.
+- O motivo para manter este projeto separado esta documentado no
+  [`ADR 0001`](./docs/adr/0001-separate-derived-project.md).
 
-## 📄 Licença
+## Licenca
 
-Distribuído sob a licença **MIT**. Consulte o arquivo [`LICENSE`](./LICENSE) para mais detalhes.
+Distribuido sob a [licenca MIT](./LICENSE).
 
----
+## Autor
 
-<div align="center">
-
-Desenvolvido por **Lucas** · Engenharia Ambiental & Engenharia de Dados
-
-[![GitHub](https://img.shields.io/badge/GitHub-engambientalucas--design-181717?style=flat-square&logo=github)](https://github.com/engambientalucas-design)
-
-</div>
+**Lucas Prado Siqueira**  
+Engenharia Ambiental e Engenharia de Dados  
+[GitHub](https://github.com/engambientalucas-design)
